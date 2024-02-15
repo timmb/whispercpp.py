@@ -40,9 +40,14 @@ def download_model(model):
     if model_exists(model):
         return
 
-    print(f'Downloading {model}...')
-    url = MODELS[model]
+    if model in MODELS:
+        url = MODELS[model]
+    else:
+        # have a guess
+        url = f'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{model}'
+    print(f'Downloading {model} from {url}...')
     r = requests.get(url, allow_redirects=True)
+    r.raise_for_status()
     os.makedirs(MODELS_DIR, exist_ok=True)
     with open(Path(MODELS_DIR).joinpath(model), 'wb') as f:
         f.write(r.content)
@@ -74,12 +79,12 @@ cdef cnp.ndarray[cnp.float32_t, ndim=1, mode="c"] load_audio(bytes file, int sr 
 
     return frames
 
-cdef whisper_full_params default_params() nogil:
+cdef whisper_full_params default_params(int verbose) nogil:
     cdef whisper_full_params params = whisper_full_default_params(
         whisper_sampling_strategy.WHISPER_SAMPLING_GREEDY
     )
-    params.print_realtime = True
-    params.print_progress = True
+    params.print_realtime = verbose
+    params.print_progress = verbose
     params.translate = False
     params.language = <const char *> LANGUAGE
     n_threads = N_THREADS
@@ -90,7 +95,7 @@ cdef class Whisper:
     cdef whisper_context * ctx
     cdef whisper_full_params params
 
-    def __init__(self, model=DEFAULT_MODEL, pb=None, buf=None):
+    def __init__(self, model=DEFAULT_MODEL, pb=None, buf=None, verbose=True):
         
         model_fullname = f'ggml-{model}.bin'
         download_model(model_fullname)
@@ -102,7 +107,7 @@ cdef class Whisper:
         else:
             self.ctx = whisper_init_from_file(model_b)
         
-        self.params = default_params()
+        self.params = default_params(verbose)
         whisper_print_system_info()
 
 
@@ -110,7 +115,8 @@ cdef class Whisper:
         whisper_free(self.ctx)
 
     def transcribe(self, filename=TEST_FILE):
-        print("Loading data..")
+        if self.params.print_progress:
+            print("Loading data..")
         if (type(filename) == np.ndarray) :
             temp = filename
         
@@ -126,7 +132,8 @@ cdef class Whisper:
         return whisper_full(self.ctx, self.params, &frames[0], len(frames))
     
     def extract_text(self, int res):
-        print("Extracting text...")
+        if self.params.print_progress:
+            print("Extracting text...")
         if res != 0:
             raise RuntimeError
         cdef int n_segments = whisper_full_n_segments(self.ctx)
